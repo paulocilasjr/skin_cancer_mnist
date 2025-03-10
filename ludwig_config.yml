@@ -1,0 +1,84 @@
+input_features:
+  - name: image
+    type: image
+    preprocessing:
+      height: 75
+      width: 100
+      num_channels: 3
+      normalization: standard  # Matches your mean/std normalization
+    encoder:
+      type: stacked_cnn
+      conv_layers:
+        - num_filters: 32
+          filter_size: [3, 3]
+          activation: relu
+          padding: same
+        - num_filters: 32
+          filter_size: [3, 3]
+          activation: relu
+          padding: same
+        - pool_size: [2, 2]
+          pool_type: max
+        - dropout: 0.25
+        - num_filters: 64
+          filter_size: [3, 3]
+          activation: relu
+          padding: same
+        - num_filters: 64
+          filter_size: [3, 3]
+          activation: relu
+          padding: same
+        - pool_size: [2, 2]
+          pool_type: max
+        - dropout: 0.40
+      fc_layers:
+        - output_size: 128
+          activation: relu
+          dropout: 0.5
+
+output_features:
+  - name: label
+    type: category
+    num_classes: 7  # 7 classes for labels 1-7
+    preprocessing:
+      missing_value_strategy: fill_with_const
+      fill_value: 0  # Use 0 for missing labels
+
+preprocessing:
+  split:
+    type: random
+    probabilities:
+      train: 0.72   # 80% train * 90% train = 72% overall
+      validation: 0.08  # 80% train * 10% validation = 8% overall
+      test: 0.20    # 20% test
+
+training:
+  batch_size: 10
+  epochs: 50
+  optimizer:
+    type: adam
+    beta1: 0.9
+    beta2: 0.999
+    epsilon: null
+    learning_rate: 0.001
+  learning_rate_scheduler:
+    type: reduce_on_plateau
+    reduce_factor: 0.5
+    patience: 3
+    min_learning_rate: 0.00001
+    monitor: validation_accuracy
+
+trainer:
+  early_stop: 10  # Number of epochs without improvement
+  metrics:
+    - accuracy
+  loss: categorical_crossentropy
+
+data_augmentation:
+  image:
+    rotation_range: 10
+    zoom_range: 0.1
+    width_shift_range: 0.1
+    height_shift_range: 0.1
+    horizontal_flip: false
+    vertical_flip: false
