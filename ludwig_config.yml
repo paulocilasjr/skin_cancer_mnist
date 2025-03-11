@@ -1,11 +1,11 @@
 input_features:
-  - name: image
+  - name: image_id
     type: image
     preprocessing:
-      height: 75
-      width: 100
+      height: 128  # Increased from 75 to avoid excessive reduction
+      width: 128   # Increased from 100 to avoid excessive reduction
       num_channels: 3
-      normalization: standard  # Matches your mean/std normalization
+      normalization: standard
     encoder:
       type: stacked_cnn
       conv_layers:
@@ -19,6 +19,7 @@ input_features:
           padding: same
         - pool_size: [2, 2]
           pool_type: max
+          pool_stride: 2  # Explicitly set to clarify reduction rate
         - dropout: 0.25
         - num_filters: 64
           filter_size: [3, 3]
@@ -30,6 +31,7 @@ input_features:
           padding: same
         - pool_size: [2, 2]
           pool_type: max
+          pool_stride: 2  # Explicitly set to clarify reduction rate
         - dropout: 0.40
       fc_layers:
         - output_size: 128
@@ -39,37 +41,25 @@ input_features:
 output_features:
   - name: label
     type: category
-    num_classes: 7  # 7 classes for labels 1-7
-    preprocessing:
-      missing_value_strategy: fill_with_const
-      fill_value: 0  # Use 0 for missing labels
+    num_classes: 7
 
 preprocessing:
   split:
-    type: random
-    probabilities:
-      train: 0.72   # 80% train * 90% train = 72% overall
-      validation: 0.08  # 80% train * 10% validation = 8% overall
-      test: 0.20    # 20% test
+    type: fixed
+    column: split
 
 training:
   batch_size: 10
   epochs: 50
   optimizer:
     type: adam
-    beta1: 0.9
-    beta2: 0.999
-    epsilon: null
-    learning_rate: 0.001
   learning_rate_scheduler:
     type: reduce_on_plateau
-    reduce_factor: 0.5
-    patience: 3
-    min_learning_rate: 0.00001
-    monitor: validation_accuracy
+    factor: 0.5
+    patience: 5
 
 trainer:
-  early_stop: 10  # Number of epochs without improvement
+  early_stop: 10
   metrics:
     - accuracy
   loss: categorical_crossentropy
