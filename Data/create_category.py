@@ -25,7 +25,7 @@ def assign_split(image_id, train_ratio=0.7, val_ratio=0.1, test_ratio=0.2):
 
 def create_category_split_file(metadata_path, output_path):
     """
-    Creates the Ham10000_Category.csv file with image_id, Ludwig-compatible label, 
+    Creates the Ham10000_Category.csv file with image_path, Ludwig-compatible label, 
     and numerical split (0:train, 1:val, 2:test).
     """
     print(f"--- Starting to create category split file ---")
@@ -61,10 +61,10 @@ def create_category_split_file(metadata_path, output_path):
 
             split = assign_split(original_image_id)
             
-            output_image_id_format = f"HAM10000_all_images/{original_image_id}.jpg"
+            output_image_path = f"HAM10000_all_images/{original_image_id}.jpg"
             
             output_data.append({
-                'image_id': output_image_id_format,
+                'image_path': output_image_path, 
                 'label': label,
                 'split': split
             })
@@ -72,10 +72,14 @@ def create_category_split_file(metadata_path, output_path):
         print("Finished processing rows.")
         output_df = pd.DataFrame(output_data)
         
-        final_columns_order = ['image_id', 'label', 'split']
+        final_columns_order = ['image_path', 'label', 'split']
         output_df = output_df[final_columns_order]
         
         print(f"Attempting to write DataFrame to: {output_path}")
+        
+        # create the directory if it doesn't exist
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        
         output_df.to_csv(output_path, index=False)
         print(f"Successfully created {output_path} with {len(output_df)} entries.")
         
@@ -117,7 +121,8 @@ if __name__ == '__main__':
     
     base_dir = "/Volumes/SP PHD U3/New_Ham10000"
     metadata_file = os.path.join(base_dir, "HAM10000_metadata.csv")
-    output_file = os.path.join(base_dir, "Ham10000_Category.csv")
+    # MODIFIED: Changed the output location to the Data folder
+    output_file = os.path.join(base_dir, "Data", "Ham10000_Category.csv")
 
     print(f"Using base directory: {base_dir}")
     print(f"Input metadata file: {metadata_file}")

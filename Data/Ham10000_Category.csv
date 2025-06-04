@@ -1,4 +1,4 @@
-image_id,label,split
+image_path,label,split
 HAM10000_all_images/ISIC_0027419.jpg,2,0
 HAM10000_all_images/ISIC_0025030.jpg,2,0
 HAM10000_all_images/ISIC_0026769.jpg,2,0
