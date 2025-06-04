@@ -1,0 +1,9 @@
+{
+	"ag-20250604_013142": {
+		"balanced_accuracy": 0.8536,
+		"f1_macro": 0.8667,
+		"precision_macro": 0.8862,
+		"recall_macro": 0.8536,
+		"accuracy": 0.9128
+	}
+}
