@@ -1,9 +1,40 @@
 {
 	"ag-20250604_013142": {
-		"balanced_accuracy": 0.8536,
-		"f1_macro": 0.8667,
-		"precision_macro": 0.8862,
-		"recall_macro": 0.8536,
-		"accuracy": 0.9128
+		"model": "caformer_b36.sail_in22k_ft_in1k",
+		"metrics": {
+			"balanced_accuracy": 0.8536,
+			"f1_macro": 0.8667,
+			"precision_macro": 0.8862,
+			"recall_macro": 0.8536,
+			"accuracy": 0.9128
+		}
+	},
+	"galaxy_ludwig": {
+		"model": "vit_b16",
+		"metrics": {
+			"accuracy_micro": 0.8142,
+			"avg_f1_macro": 0.6590,
+			"avg_f1_weigted": 0.7999,
+			"avg_precision_macro": 0.7317,
+			"avg_precision_weigthed": 0.8142,
+			"avg_recall_macro": 0.6145,
+			"avg_recall_weighted": 0.8142,
+			"accuracy": 0.6145
+		}
+
+	},
+	"galaxy_ludwig": {
+		"model": "stacked_cnn",
+		"metrics": {
+			"accuracy_micro": 0.6880,
+			"avg_f1_macro": 0.4309,
+			"avg_f1_weigted": 0.6809,
+			"avg_precision_macro": 0.5894,
+			"avg_precision_weigthed": 0.6880,
+			"avg_recall_macro": 0.4148,
+			"avg_recall_weighted": 0.6880,
+			"accuracy": 0.4148
+		}
 	}
+
 }
