@@ -79,10 +79,10 @@ def split_by_lesion_80_20(df):
         lids = c["lesion_id"].unique()
         if len(lids) < 2:
             train_parts.append(c)
-            continue
-        tr_lids, te_lids = train_test_split(lids, test_size=0.2, random_state=42)
-        train_parts.append(c[c["lesion_id"].isin(tr_lids)])
-        test_parts.append(c[c["lesion_id"].isin(te_lids)])
+        else:
+            tr_lids, te_lids = train_test_split(lids, test_size=0.2, random_state=42)
+            train_parts.append(c[c["lesion_id"].isin(tr_lids)])
+            test_parts.append(c[c["lesion_id"].isin(te_lids)])
     return (
         pd.concat(train_parts, ignore_index=True),
         pd.concat(test_parts,  ignore_index=True)
@@ -96,15 +96,15 @@ def extract_features(img: Image.Image) -> dict:
     img220 = img.resize(IMG_SIZE_220, Image.Resampling.LANCZOS)
     arr = np.array(img220)
     # Color histogram (16 bins each channel)
-    for i, col in enumerate(["r", "g", "b"]):
+    for i, col in enumerate("rgb"):
         hist = cv2.calcHist([arr], [i], None, [16], [0, 256]).flatten()
         for j, val in enumerate(hist):
             f[f"{col}_hist_{j}"] = float(val)
     # Grayscale for texture & shape
     gray = cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY)
     # Haralick (GLCM)
-    glcm = graycomatrix(gray, distances=[1], angles=[0],
-                        levels=256, symmetric=True, normed=True)
+    glcm = graycomatrix(gray, distances=[1], angles=[0], levels=256,
+                        symmetric=True, normed=True)
     for prop in ["contrast", "dissimilarity", "homogeneity", "energy", "correlation"]:
         f[f"haralick_{prop}"] = float(graycoprops(glcm, prop)[0, 0])
     # Hu Moments
@@ -118,13 +118,6 @@ def extract_features(img: Image.Image) -> dict:
 # Save, augment, extract for one split
 # -----------------------------------------------------------------------------
 def save_split(df_split, outdir, split_id, image_dir, do_numeric):
-    """
-    Processes one split:
-    - Saves 220x220 originals + flips
-    - Saves 96x96 CNN inputs
-    - Extracts numeric features if do_numeric=True
-    - Returns metadata list and feature list
-    """
     dir220 = os.path.join(outdir, "images_220")
     dir96  = os.path.join(outdir, "images_96")
     os.makedirs(dir220, exist_ok=True)
@@ -137,17 +130,17 @@ def save_split(df_split, outdir, split_id, image_dir, do_numeric):
         src = os.path.join(image_dir, f"{iid}.jpg")
         try:
             im = Image.open(src).convert("RGB")
-            # augment and save both sizes
             for tag, img in [("orig", im), ("flip", im.transpose(Image.FLIP_LEFT_RIGHT))]:
                 fn = f"{iid}_{tag}.jpg"
                 # 220x220
-                p220 = os.path.join(dir220, fn)
-                img.resize(IMG_SIZE_220, Image.Resampling.LANCZOS).save(p220, "JPEG", quality=95)
+                img.resize(IMG_SIZE_220, Image.Resampling.LANCZOS).save(
+                    os.path.join(dir220, fn), "JPEG", quality=95
+                )
                 # 96x96
-                p96 = os.path.join(dir96, fn)
-                img.resize(IMG_SIZE_96, Image.Resampling.LANCZOS).save(p96, "JPEG", quality=95)
+                img.resize(IMG_SIZE_96, Image.Resampling.LANCZOS).save(
+                    os.path.join(dir96, fn), "JPEG", quality=95
+                )
                 metadata.append({"image_path": fn, "label": lbl, "split": split_id})
-            # numeric features on original only
             if do_numeric:
                 feat = extract_features(im)
                 feat.update({"image_path": f"{iid}_orig.jpg", "label": lbl, "split": split_id})
@@ -155,39 +148,25 @@ def save_split(df_split, outdir, split_id, image_dir, do_numeric):
         except Exception as e:
             print(f"Skipping {src}: {e}")
 
-    # zip & remove folders
-    for dname, zname in [(dir220, "selected_images_220.zip"), (dir96, "selected_images_96.zip")]:
-        zip_path = os.path.join(outdir, zname)
-        with zipfile.ZipFile(zip_path, "w") as zipf:
-            for f in os.listdir(dname):
-                zipf.write(os.path.join(dname, f), arcname=f)
-        shutil.rmtree(dname)
-
     return metadata, features
 
 # -----------------------------------------------------------------------------
 # Leakage check & summary
 # -----------------------------------------------------------------------------
 def verify_leakage(tr, va, te):
-    ids_tr, ids_va, ids_te = (set(tr["lesion_id"]), set(va["lesion_id"]), set(te["lesion_id"]))
-    pairs = {
-        "TRAIN/VAL": ids_tr & ids_va,
-        "TRAIN/TEST": ids_tr & ids_te,
-        "VAL/TEST":   ids_va & ids_te,
-    }
-    leaked = False
-    for name, shared in pairs.items():
+    ids_tr, ids_va, ids_te = set(tr["lesion_id"]), set(va["lesion_id"]), set(te["lesion_id"])
+    for name, shared in [("TRAIN/VAL", ids_tr & ids_va),
+                         ("TRAIN/TEST", ids_tr & ids_te),
+                         ("VAL/TEST",   ids_va & ids_te)]:
         if shared:
             print(f"❌ Leakage detected {name}: {len(shared)} lesions")
-            leaked = True
-    if not leaked:
+    if not (ids_tr & ids_va or ids_tr & ids_te or ids_va & ids_te):
         print("✅ No lesion_id overlap between splits")
 
 def summarize_split(df, label):
     print(f"\n{label} set: {len(df)} samples")
     if not df.empty:
-        vc = df["label"].value_counts()
-        for cls, cnt in vc.items():
+        for cls, cnt in df["label"].value_counts().items():
             print(f"  {cls}: {cnt}")
 
 # -----------------------------------------------------------------------------
@@ -220,11 +199,24 @@ def create_dataset(df, outdir, image_dir, leak_mode):
         feat_all += f
 
     pd.DataFrame(meta_all).to_csv(os.path.join(outdir, "image_metadata.csv"), index=False)
-    pd.DataFrame(feat_all).to_csv(os.path.join(outdir, "features_ludwig.csv"),    index=False)
+    pd.DataFrame(feat_all).to_csv(os.path.join(outdir, "features_ludwig.csv"),  index=False)
+
+    # -----------------------------------------------------------------------------
+    # finally: zip up **all** of the images_96 and images_220 folders at once
+    # -----------------------------------------------------------------------------
+    for folder, zipname in [("images_96", "selected_images_96.zip"),
+                            ("images_220", "selected_images_220.zip")]:
+        folder_path = os.path.join(outdir, folder)
+        zip_path    = os.path.join(outdir, zipname)
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            for fname in os.listdir(folder_path):
+                zf.write(os.path.join(folder_path, fname), arcname=fname)
+        shutil.rmtree(folder_path)
 
     print(f"\n✅ Finished {outdir}:")
     print(f"  metadata rows: {len(meta_all)}")
     print(f"  feature rows:  {len(feat_all)}")
+    print(f"  archives: selected_images_96.zip, selected_images_220.zip")
 
 # -----------------------------------------------------------------------------
 # CLI
