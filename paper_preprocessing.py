@@ -1,178 +1,141 @@
-import pandas as pd
-import numpy as np
-from PIL import Image
 import os
+import numpy as np
+import pandas as pd
+from PIL import Image
 from sklearn.model_selection import train_test_split
-from collections import defaultdict
-import shutil
+import zipfile
+import argparse
 
-def create_paper_methodology_split():
-    """
-    Implements the exact methodology from the paper:
-    1. Select 100 images per class (to handle imbalance)
-    2. Apply horizontal flip augmentation (100->200 per class)
-    3. Split into train/val/test (70/10/20)
-    4. Create new CSV and copy/augment images
-    """
-    
-    original_csv = "/Volumes/SP PHD U3/New_Ham10000/Data/Ham10000_Category.csv"
-    original_images_dir = "/Volumes/SP PHD U3/New_Ham10000/extracted_images/HAM10000_all_images"
-    
-    df = pd.read_csv(original_csv)
-    print(f"Original dataset shape: {df.shape}")
-    print(f"Label distribution:\n{df['label'].value_counts().sort_index()}")
-    
-    # select 100 images per class (paper's approach to handle imbalance)
-    selected_data = []
-    
+# Constants
+SAMPLES_PER_CLASS = 100
+IMAGE_SIZE = (220, 220)
+OUTPUT_DIR_1 = "./processed_data"
+OUTPUT_DIR_2 = "./processed_data_no_leak"
+
+def load_data(csv_path):
+    df = pd.read_csv(csv_path)
+    df = df.sort_values(by=["image_id", "dx"])
+    df = df.rename(columns={"dx": "label"})  # Use 'dx' as class label
+    return df
+
+def sample_balanced(df, stratify_by_lesion=False):
+    sampled = []
     for label in sorted(df['label'].unique()):
-        class_data = df[df['label'] == label]
-        print(f"\nClass {label}: {len(class_data)} images available")
-        
-        # select 100 images per class 
-        n_select = min(100, len(class_data))
-        selected = class_data.sample(n=n_select, random_state=42)
-        selected_data.append(selected)
-        print(f"Selected {len(selected)} images for class {label}")
-    
-    # combine selected data
-    selected_df = pd.concat(selected_data, ignore_index=True)
-    print(f"\nTotal selected images: {len(selected_df)}")
-    print(f"Selected distribution:\n{selected_df['label'].value_counts().sort_index()}")
-    
-    # create train/val/test splits (70/10/20) before augmentation
-    # this ensures original images are properly distributed
-    train_data = []
-    val_data = []
-    test_data = []
-    
-    for label in sorted(selected_df['label'].unique()):
-        class_data = selected_df[selected_df['label'] == label]
-        
-        # first split: 70% train, 30% temp
-        train_subset, temp_subset = train_test_split(
-            class_data, test_size=0.3, random_state=42, stratify=None
-        )
-        
-        # second split: from 30% -> 10% val, 20% test (1/3 and 2/3 of 30%)
-        val_subset, test_subset = train_test_split(
-            temp_subset, test_size=0.667, random_state=42, stratify=None
-        )
-        
-        train_data.append(train_subset)
-        val_data.append(val_subset)
-        test_data.append(test_subset)
-        
-        print(f"Class {label}: Train={len(train_subset)}, Val={len(val_subset)}, Test={len(test_subset)}")
-    
-    # combine splits
-    train_df = pd.concat(train_data, ignore_index=True)
-    val_df = pd.concat(val_data, ignore_index=True)
-    test_df = pd.concat(test_data, ignore_index=True)
-    
-    print(f"\nSplit sizes - Train: {len(train_df)}, Val: {len(val_df)}, Test: {len(test_df)}")
-    
-    # create output directories
-    output_dir = "/Volumes/SP PHD U3/New_Ham10000/paper_processed"
-    output_images_dir = os.path.join(output_dir, "images")
-    os.makedirs(output_images_dir, exist_ok=True)
-    
-    final_data = []
-    
-    def process_and_augment(df_subset, split_name):
-        """process images and apply horizontal flip augmentation"""
-        processed_data = []
-        
-        for idx, row in df_subset.iterrows():
-            original_path = row['image_path']
-            full_original_path = os.path.join("/Volumes/SP PHD U3/New_Ham10000/extracted_images", original_path)
-            
-            if not os.path.exists(full_original_path):
-                print(f"Warning: Image not found: {full_original_path}")
-                continue
-            
-            try:
-                image = Image.open(full_original_path)
-                image = image.convert('RGB')
-            except Exception as e:
-                print(f"Warning: Could not read image: {full_original_path}, Error: {e}")
-                continue
-            
-            # get original filename without extension
-            original_filename = os.path.basename(original_path)
-            name_without_ext = os.path.splitext(original_filename)[0]
-            
-            # save original image (resized to 220x220 for ML as per paper)
-            original_resized = image.resize((220, 220), Image.Resampling.LANCZOS)
-            original_output_path = os.path.join(output_images_dir, f"{name_without_ext}_original.jpg")
-            original_resized.save(original_output_path, 'JPEG', quality=95)
-            
-            # map split names to numeric values like original dataset
-            split_mapping = {'train': 0, 'validation': 1, 'test': 2}
-            split_numeric = split_mapping[split_name]
-            
-            # add original to data
-            processed_data.append({
-                'image_path': f"images/{name_without_ext}_original.jpg",
-                'label': row['label'],
-                'split': split_numeric
-            })
-            
-            # create and save horizontally flipped image (paper's augmentation method)
-            flipped_image = original_resized.transpose(Image.FLIP_LEFT_RIGHT)  # horizontal flip
-            flipped_output_path = os.path.join(output_images_dir, f"{name_without_ext}_flipped.jpg")
-            flipped_image.save(flipped_output_path, 'JPEG', quality=95)
-            
-            # add flipped to data
-            processed_data.append({
-                'image_path': f"images/{name_without_ext}_flipped.jpg",
-                'label': row['label'],
-                'split': split_numeric
-            })
-        
-        return processed_data
-    
-    # process each split
-    print("\nProcessing and augmenting images...")
-    print("Processing training set...")
-    train_processed = process_and_augment(train_df, 'train')
-    
-    print("Processing validation set...")
-    val_processed = process_and_augment(val_df, 'validation')
-    
-    print("Processing test set...")
-    test_processed = process_and_augment(test_df, 'test')
-    
-    # combine all processed data
-    final_data = train_processed + val_processed + test_processed
-    
-    final_df = pd.DataFrame(final_data)
-    
-    output_csv = os.path.join(output_dir, "paper_methodology_dataset.csv")
-    final_df.to_csv(output_csv, index=False)
-    
-    print(f"\n=== FINAL RESULTS ===")
-    print(f"Total images created: {len(final_df)}")
-    print(f"Output directory: {output_dir}")
-    print(f"CSV file: {output_csv}")
-    
-    print(f"\nSplit distribution:")
-    split_counts = final_df['split'].value_counts()
-    print(split_counts)
-    
-    print(f"\nLabel distribution per split:")
-    split_names = {0: 'TRAIN', 1: 'VALIDATION', 2: 'TEST'}
-    for split_num in [0, 1, 2]:
-        split_data = final_df[final_df['split'] == split_num]
-        print(f"\n{split_names[split_num]} (split={split_num}):")
-        print(split_data['label'].value_counts().sort_index())
-    
-    print(f"\nAugmentation summary:")
-    print(f"Total images: {len(final_df)}")
-    print("Each class has been doubled through horizontal flip augmentation")
-        
-    return final_df
+        class_df = df[df['label'] == label]
+        if stratify_by_lesion:
+            lesion_groups = class_df.groupby("lesion_id")
+            unique_lesions = lesion_groups.first().reset_index()
+            n = min(SAMPLES_PER_CLASS, len(unique_lesions))
+            selected_lesions = unique_lesions.sample(n=n, random_state=42)
+            sampled.append(selected_lesions)
+        else:
+            n = min(SAMPLES_PER_CLASS, len(class_df))
+            sampled.append(class_df.sample(n=n, random_state=42))
+    return pd.concat(sampled, ignore_index=True)
+
+def split_by_lesion(df):
+    train_ids, temp_ids = train_test_split(df['lesion_id'].unique(), test_size=0.3, random_state=42)
+    val_ids, test_ids = train_test_split(temp_ids, test_size=2/3, random_state=42)
+
+    train_df = df[df['lesion_id'].isin(train_ids)]
+    val_df = df[df['lesion_id'].isin(val_ids)]
+    test_df = df[df['lesion_id'].isin(test_ids)]
+
+    return train_df, val_df, test_df
+
+def save_and_augment(df, output_dir, split_value, metadata, image_dir):
+    images_out = os.path.join(output_dir, "images")
+    os.makedirs(images_out, exist_ok=True)
+
+    for _, row in df.iterrows():
+        image_filename = f"{row['image_id']}.jpg"
+        path = os.path.join(image_dir, image_filename)
+        try:
+            img = Image.open(path).convert('RGB')
+            resized = img.resize(IMAGE_SIZE, Image.Resampling.LANCZOS)
+            label = row['label']
+            base = row['image_id']
+
+            orig_filename = f"{base}_original.jpg"
+            flip_filename = f"{base}_flipped.jpg"
+            orig_path = os.path.join(images_out, orig_filename)
+            flip_path = os.path.join(images_out, flip_filename)
+
+            resized.save(orig_path, 'JPEG', quality=95)
+            flipped = resized.transpose(Image.FLIP_LEFT_RIGHT)
+            flipped.save(flip_path, 'JPEG', quality=95)
+
+            metadata.append({"image_path": orig_filename, "label": label, "split": split_value})
+            metadata.append({"image_path": flip_filename, "label": label, "split": split_value})
+        except Exception as e:
+            print(f"Skipping {path}: {e}")
+
+def save_metadata(metadata, output_dir):
+    df = pd.DataFrame(metadata)
+    df.to_csv(os.path.join(output_dir, "image_metadata.csv"), index=False)
+
+def zip_images(output_dir):
+    images_dir = os.path.join(output_dir, "images")
+    zip_path = os.path.join(output_dir, "selected_images.zip")
+    with zipfile.ZipFile(zip_path, 'w') as zf:
+        for file in os.listdir(images_dir):
+            zf.write(os.path.join(images_dir, file), arcname=file)
+
+def create_dataset(df, output_dir, image_dir, avoid_leakage=False):
+    print(f"\n🔧 Creating {'leak-free ' if avoid_leakage else ''}dataset at {output_dir}")
+    balanced_df = sample_balanced(df, stratify_by_lesion=avoid_leakage)
+
+    if avoid_leakage:
+        train_df, val_df, test_df = split_by_lesion(balanced_df)
+    else:
+        train_df, temp_df = train_test_split(balanced_df, test_size=0.3, random_state=42, stratify=balanced_df['label'])
+        val_df, test_df = train_test_split(temp_df, test_size=2/3, random_state=42, stratify=temp_df['label'])
+
+    # ✅ Check for lesion_id leakage
+    train_ids = set(train_df['lesion_id'])
+    val_ids = set(val_df['lesion_id'])
+    test_ids = set(test_df['lesion_id'])
+
+    val_train_overlap = train_ids.intersection(val_ids)
+    test_train_overlap = train_ids.intersection(test_ids)
+    test_val_overlap = val_ids.intersection(test_ids)
+
+    if val_train_overlap or test_train_overlap or test_val_overlap:
+        print("❌ DATA LEAK DETECTED:")
+        if val_train_overlap:
+            print(f"  - {len(val_train_overlap)} lesion_id(s) shared between TRAIN and VAL")
+        if test_train_overlap:
+            print(f"  - {len(test_train_overlap)} lesion_id(s) shared between TRAIN and TEST")
+        if test_val_overlap:
+            print(f"  - {len(test_val_overlap)} lesion_id(s) shared between VAL and TEST")
+    else:
+        print("✅ Dataset is leak-free (no lesion_id overlap between splits)")
+
+    metadata = []
+    save_and_augment(train_df, output_dir, 0, metadata, image_dir)
+    save_and_augment(val_df, output_dir, 1, metadata, image_dir)
+    save_and_augment(test_df, output_dir, 2, metadata, image_dir)
+
+    save_metadata(metadata, output_dir)
+    zip_images(output_dir)
+
+    print(f"✅ Done: {len(metadata)} images saved (with augmentation).")
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Preprocess HAM10000 dataset with and without lesion_id leakage.")
+    parser.add_argument('--csv', type=str, required=True, help='Path to HAM10000 metadata CSV file')
+    parser.add_argument('--images', type=str, required=True, help='Path to folder containing HAM10000 images')
+    return parser.parse_args()
+
+def main():
+    args = parse_args()
+    df = load_data(args.csv)
+
+    # Dataset 1: Random split (may contain lesion_id leakage)
+    create_dataset(df, OUTPUT_DIR_1, args.images, avoid_leakage=False)
+
+    # Dataset 2: Lesion-aware split (no leakage)
+    create_dataset(df, OUTPUT_DIR_2, args.images, avoid_leakage=True)
 
 if __name__ == "__main__":
-    result_df = create_paper_methodology_split()
-    print("\nPaper methodology preprocessing completed successfully!") 
+    main()
