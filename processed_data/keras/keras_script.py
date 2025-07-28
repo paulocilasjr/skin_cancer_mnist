@@ -14,73 +14,77 @@ from sklearn.metrics import (
 )
 from tensorflow.keras.preprocessing.image import img_to_array, load_img, ImageDataGenerator
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import (Conv2D, MaxPooling2D, Dropout, Flatten, Dense, BatchNormalization)
+from tensorflow.keras.layers import Conv2D, MaxPooling2D, Dropout, Flatten, Dense, BatchNormalization
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.utils import to_categorical
 from tqdm import tqdm
 
 # === Parameters ===
-IMAGE_DIR = './../images_96'
-CSV_FILE = './../image_metadata.csv'
-IMG_WIDTH, IMG_HEIGHT = 96, 96
-EPOCHS = 150
-BATCH_SIZE = 32
+IMAGE_DIR     = './../images_220'
+CSV_FILE      = './../image_metadata_val.csv'
+IMG_WIDTH     = 220
+IMG_HEIGHT    = 220
+EPOCHS        = 150
+BATCH_SIZE    = 16
 LEARNING_RATE = 0.001
 
 # === Load metadata ===
 df = pd.read_csv(CSV_FILE)
 print(f"Total rows in metadata: {len(df)}")
 
+# === Split by 'split' column (0=train, 1=val, 2=test) ===
+df_train = df[df['split'] == 0].copy()
+df_val   = df[df['split'] == 1].copy()
+df_test  = df[df['split'] == 2].copy()
+print(f"Before filtering → Train: {len(df_train)}, Val: {len(df_val)}, Test: {len(df_test)}")
+
 # === Filter only valid image paths ===
 def filter_existing_images(df_subset):
-    def full_path(img): return os.path.join(IMAGE_DIR, img)
-    valid_rows = df_subset['image_path'].apply(lambda x: os.path.exists(full_path(x)))
-    missing_paths = df_subset[~valid_rows]['image_path'].head(5).tolist()
-    missing_count = (~valid_rows).sum()
-    if missing_count > 0:
-        print(f"⚠️ Warning: {missing_count} images not found (e.g., {missing_paths})")
-    return df_subset[valid_rows]
-
-df_train = df[df["split"] == 0]
-df_test = df[df["split"] == 2]
-print(f"Original splits → Train: {len(df_train)}, Test: {len(df_test)}")
+    def full_path(fn): return os.path.join(IMAGE_DIR, fn)
+    mask = df_subset['image_path'].apply(lambda fn: os.path.exists(full_path(fn)))
+    if (~mask).any():
+        missing = df_subset.loc[~mask, 'image_path'].head(5).tolist()
+        print(f"⚠️ Warning: {(~mask).sum()} images not found (e.g., {missing})")
+    return df_subset[mask]
 
 df_train = filter_existing_images(df_train)
-df_test = filter_existing_images(df_test)
-print(f"After filtering → Train: {len(df_train)}, Test: {len(df_test)}")
+df_val   = filter_existing_images(df_val)
+df_test  = filter_existing_images(df_test)
+print(f"After filtering → Train: {len(df_train)}, Val: {len(df_val)}, Test: {len(df_test)}")
 
 # === Load images and labels ===
 def load_images_and_labels(df_subset):
-    images = []
-    labels = []
+    imgs, labels = [], []
     for _, row in tqdm(df_subset.iterrows(), total=len(df_subset), desc="Loading images"):
-        img_path = os.path.join(IMAGE_DIR, row['image_path'])
+        path = os.path.join(IMAGE_DIR, row['image_path'])
         try:
-            img = load_img(img_path, target_size=(IMG_HEIGHT, IMG_WIDTH))
-            img = img_to_array(img) / 255.0  # Normalize to [0,1]
-            images.append(img)
+            img = load_img(path, target_size=(IMG_HEIGHT, IMG_WIDTH))
+            imgs.append(img_to_array(img) / 255.0)
             labels.append(row['label'])
         except Exception as e:
-            print(f"Error loading {img_path}: {e}")
-    return np.array(images), np.array(labels)
+            print(f"Error loading {path}: {e}")
+    return np.array(imgs), np.array(labels)
 
 X_train, y_train_raw = load_images_and_labels(df_train)
-X_test, y_test_raw = load_images_and_labels(df_test)
+X_val,   y_val_raw   = load_images_and_labels(df_val)
+X_test,  y_test_raw  = load_images_and_labels(df_test)
 
-print(f"Loaded → Train images: {len(X_train)}, Test images: {len(X_test)}")
-
-if len(X_train) == 0 or len(X_test) == 0:
-    raise ValueError("No training or testing images were loaded. Check file paths and 'split' column.")
+print(f"Loaded → Train: {len(X_train)}, Val: {len(X_val)}, Test: {len(X_test)}")
+if min(len(X_train), len(X_val), len(X_test)) == 0:
+    raise ValueError("One of the splits has no images. Check your CSV and paths.")
 
 # === Encode labels ===
 le = LabelEncoder()
-y_train_int = le.fit_transform(y_train_raw)
-y_test_int = le.transform(y_test_raw)
+y_train_i = le.fit_transform(y_train_raw)
+y_val_i   = le.transform(y_val_raw)
+y_test_i  = le.transform(y_test_raw)
 
-y_train_encoded = to_categorical(y_train_int)
-y_test_encoded = to_categorical(y_test_int)
-NUM_CLASSES = y_train_encoded.shape[1]
-class_names = le.classes_
+y_train = to_categorical(y_train_i)
+y_val   = to_categorical(y_val_i)
+y_test  = to_categorical(y_test_i)
+NUM_CLASSES = y_train.shape[1]
+# Ensure class_names are strings for classification_report
+class_names = [str(c) for c in le.classes_]
 
 # === Data Augmentation ===
 aug = ImageDataGenerator(
@@ -88,82 +92,80 @@ aug = ImageDataGenerator(
     shear_range=0.1,
     zoom_range=0.1,
     horizontal_flip=True,
-    fill_mode="nearest"
+    fill_mode='nearest'
 )
 
 # === Build CNN ===
-model = Sequential()
+model = Sequential([
+    Conv2D(32, (3,3), activation='relu', padding='same', input_shape=(IMG_HEIGHT, IMG_WIDTH, 3)),
+    BatchNormalization(),
+    MaxPooling2D((3,3)),
+    Dropout(0.25),
 
-# Block 1
-model.add(Conv2D(32, (3, 3), activation='relu', padding='same', input_shape=(IMG_HEIGHT, IMG_WIDTH, 3)))
-model.add(BatchNormalization())
-model.add(MaxPooling2D(pool_size=(3, 3)))
-model.add(Dropout(0.25))
+    Conv2D(64, (3,3), activation='relu', padding='same'),
+    Conv2D(64, (3,3), activation='relu', padding='same'),
+    BatchNormalization(),
+    MaxPooling2D((2,2)),
+    Dropout(0.25),
 
-# Block 2
-model.add(Conv2D(64, (3, 3), activation='relu', padding='same'))
-model.add(Conv2D(64, (3, 3), activation='relu', padding='same'))
-model.add(BatchNormalization())
-model.add(MaxPooling2D(pool_size=(2, 2)))
-model.add(Dropout(0.25))
+    Conv2D(128, (3,3), activation='relu', padding='same'),
+    BatchNormalization(),
+    Conv2D(128, (3,3), activation='relu', padding='same'),
+    BatchNormalization(),
+    MaxPooling2D((2,2)),
+    Dropout(0.25),
 
-# Block 3
-model.add(Conv2D(128, (3, 3), activation='relu', padding='same'))
-model.add(BatchNormalization())
-model.add(Conv2D(128, (3, 3), activation='relu', padding='same'))
-model.add(BatchNormalization())
-model.add(MaxPooling2D(pool_size=(2, 2)))
-model.add(Dropout(0.25))
+    Flatten(),
+    Dense(1024, activation='relu'),
+    BatchNormalization(),
+    Dropout(0.5),
+    Dense(NUM_CLASSES, activation='softmax')
+])
 
-# Fully connected
-model.add(Flatten())
-model.add(Dense(1024, activation='relu'))
-model.add(BatchNormalization())
-model.add(Dropout(0.5))
-model.add(Dense(NUM_CLASSES, activation='softmax'))
-
-# === Compile ===
-opt = Adam(learning_rate=LEARNING_RATE)
-model.compile(optimizer=opt, loss='categorical_crossentropy', metrics=['accuracy'])
+model.compile(
+    optimizer=Adam(learning_rate=LEARNING_RATE),
+    loss='categorical_crossentropy',
+    metrics=['accuracy']
+)
 
 # === Train ===
 history = model.fit(
-    aug.flow(X_train, y_train_encoded, batch_size=BATCH_SIZE),
+    aug.flow(X_train, y_train, batch_size=BATCH_SIZE),
     steps_per_epoch=len(X_train) // BATCH_SIZE,
-    validation_data=(X_test, y_test_encoded),
+    validation_data=(X_val, y_val),
     epochs=EPOCHS,
     verbose=1
 )
 
-# === Evaluate model ===
-y_pred_probs = model.predict(X_test)
-y_pred_classes = np.argmax(y_pred_probs, axis=1)
-y_true_classes = np.argmax(y_test_encoded, axis=1)
+# === Evaluate on Test Set ===
+y_pred_prob = model.predict(X_test)
+y_pred      = np.argmax(y_pred_prob, axis=1)  # correct variable name
+y_true      = np.argmax(y_test, axis=1)
 
 print("\nClassification Report:")
-print(classification_report(y_true_classes, y_pred_classes, target_names=class_names))
+print(classification_report(y_true, y_pred, target_names=class_names))
 
-accuracy = accuracy_score(y_true_classes, y_pred_classes)
-balanced_acc = balanced_accuracy_score(y_true_classes, y_pred_classes)
-precision = precision_score(y_true_classes, y_pred_classes, average='macro')
-recall = recall_score(y_true_classes, y_pred_classes, average='macro')
-f1 = f1_score(y_true_classes, y_pred_classes, average='macro')
-mcc = matthews_corrcoef(y_true_classes, y_pred_classes)
+acc     = accuracy_score(y_true, y_pred)
+bal_acc = balanced_accuracy_score(y_true, y_pred)
+prec    = precision_score(y_true, y_pred, average='macro')
+rec     = recall_score(y_true, y_pred,    average='macro')
+f1      = f1_score(y_true, y_pred,        average='macro')
+mcc     = matthews_corrcoef(y_true, y_pred)
 
-print(f"\nAccuracy: {accuracy:.4f}")
-print(f"Balanced Accuracy: {balanced_acc:.4f}")
-print(f"Precision (macro): {precision:.4f}")
-print(f"Recall (macro): {recall:.4f}")
-print(f"F1-Score (macro): {f1:.4f}")
-print(f"MCC: {mcc:.4f}")
+print(f"\nAccuracy:           {acc:.4f}")
+print(f"Balanced Accuracy:  {bal_acc:.4f}")
+print(f"Precision (macro):  {prec:.4f}")
+print(f"Recall (macro):     {rec:.4f}")
+print(f"F1-Score (macro):   {f1:.4f}")
+print(f"MCC:                {mcc:.4f}")
 
 # === Plot: Training & Validation Loss/Accuracy ===
-plt.figure(figsize=(10, 6))
-plt.plot(history.history['loss'], label='Train Loss', linestyle='--')
-plt.plot(history.history['val_loss'], label='Validation Loss', linestyle='--')
+plt.figure(figsize=(10,6))
+plt.plot(history.history['loss'],     label='Train Loss',    linestyle='--')
+plt.plot(history.history['val_loss'], label='Val Loss',      linestyle='--')
 plt.plot(history.history['accuracy'], label='Train Accuracy')
-plt.plot(history.history['val_accuracy'], label='Validation Accuracy')
-plt.title("Training and Validation Loss/Accuracy")
+plt.plot(history.history['val_accuracy'], label='Val Accuracy')
+plt.title("Training vs. Validation Loss/Accuracy")
 plt.xlabel("Epoch")
 plt.ylabel("Value")
 plt.legend(loc='best')
@@ -173,17 +175,23 @@ plt.savefig("training_history.png", dpi=300)
 plt.close()
 print("✅ Saved plot: training_history.png")
 
-# === Plot: Final Evaluation Metrics (Bar Chart) ===
-metrics_names = ["Accuracy", "Balanced Accuracy", "Precision", "Recall", "F1-score", "MCC"]
-metrics_values = [accuracy, balanced_acc, precision, recall, f1, mcc]
-
-plt.figure(figsize=(10, 5))
-bars = plt.bar(metrics_names, metrics_values, color=["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b"])
-plt.ylim(0, 1)
-plt.title("Model Performance Metrics")
+# === Plot: Final Evaluation Metrics ===
+metrics = {
+    "Accuracy":           acc,
+    "Balanced Accuracy":  bal_acc,
+    "Precision":          prec,
+    "Recall":             rec,
+    "F1-score":           f1,
+    "MCC":                mcc
+}
+plt.figure(figsize=(10,5))
+plt.bar(metrics.keys(), metrics.values())
+plt.ylim(0,1)
+plt.title("Model Performance Metrics on Test Set")
 plt.ylabel("Score")
 plt.grid(axis='y', linestyle='--', alpha=0.7)
 plt.tight_layout()
 plt.savefig("evaluation_metrics.png", dpi=300)
 plt.close()
 print("✅ Saved plot: evaluation_metrics.png")
+
