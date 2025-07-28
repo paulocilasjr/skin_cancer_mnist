@@ -1,0 +1,31 @@
+input_features:
+  - name: image_path
+    type: image
+    preprocessing:
+      height: 96
+      width: 96
+      num_channels: 3
+    encoder:
+      type: vgg 
+
+output_features:
+  - name: label
+    type: category
+    decoder:
+      type: classifier
+    loss:
+      type: softmax_cross_entropy
+
+trainer:
+  batch_size: 32
+  epochs: 150
+  learning_rate: 0.001
+  optimizer:
+    type: adam
+
+preprocessing:
+  split:
+    type: fixed
+    column: split
+    test_split: 2
+    training_split: 0
